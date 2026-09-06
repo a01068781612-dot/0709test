@@ -63,6 +63,9 @@ def main() -> None:
     ap.add_argument("--voices", default=os.environ.get("GEMINI_TTS_VOICE", "Charon"),
                     help="쉼표 구분. 두 개 이상이면 목소리별 폴더로 나눠 저장한다(시청용).")
     ap.add_argument("--only", default="", help="특정 컷만 (예: 1,2,3)")
+    ap.add_argument("--delay", type=float, default=5.0,
+                    help="컷 사이 간격(초). 무료 등급의 분당 요청 한도를 피한다.")
+    ap.add_argument("--skip-existing", action="store_true", help="이미 만든 wav 는 건너뛴다")
     args = ap.parse_args()
 
     key = os.environ.get("GEMINI_API_KEY", "").strip()
@@ -82,10 +85,15 @@ def main() -> None:
         os.makedirs(outdir, exist_ok=True)
         print(f"\n■ {voice} · {args.model} · {len(lines)}컷")
         over = []
-        for l in lines:
+        for i, l in enumerate(lines):
+            path = os.path.join(outdir, f"{l['id']:02d}.wav")
+            if args.skip_existing and os.path.exists(path):
+                print(f"  {l['id']:>2} 건너뜀 (이미 있음)")
+                continue
+            if i:
+                time.sleep(args.delay)
             pcm, rate = synth(l["text"], voice, args.model, key, tone)
             dur = len(pcm) / (rate * 2)
-            path = os.path.join(outdir, f"{l['id']:02d}.wav")
             with open(path, "wb") as f:
                 f.write(wav_from_pcm(pcm, rate))
             slot = l["end"] - l["start"]

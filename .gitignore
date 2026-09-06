@@ -1,2 +1,4 @@
 wav/
+out/
+tts_run.log
 *.wav
