@@ -1,4 +1,4 @@
-wav/
+wav*/
 out/
-tts_run*.log
+tts_*.log
 *.wav
