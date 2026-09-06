@@ -1,5 +1,8 @@
 wav*/
 out/
 out2/
+out3/
+여성후보/
 tts_*.log
+여성후보.log
 *.wav
