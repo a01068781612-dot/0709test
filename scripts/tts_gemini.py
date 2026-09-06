@@ -14,6 +14,10 @@ import argparse, base64, json, os, re, struct, sys, time, urllib.error, urllib.r
 API = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
 
 
+class NoAudio(RuntimeError):
+    """모델이 오디오 대신 텍스트를 냈다 — 짧은 문장에서 가끔 발생한다."""
+
+
 def wav_from_pcm(pcm: bytes, rate: int) -> bytes:
     """Gemini 출력은 헤더 없는 16bit LE 모노 PCM 이라 WAV 헤더를 직접 붙인다."""
     return b"".join([
@@ -49,7 +53,7 @@ def synth(text: str, voice: str, model: str, key: str, tone: str, retries: int =
                  if p.get("inlineData", {}).get("data")), None)
     if not part:
         reason = (res.get("candidates") or [{}])[0].get("finishReason", "?")
-        raise SystemExit(f"오디오 없음 (finishReason={reason})")
+        raise NoAudio(f"오디오 없음 (finishReason={reason})")
     inline = part["inlineData"]
     rate = int(m.group(1)) if (m := re.search(r"rate=(\d+)", inline.get("mimeType", ""))) else 24000
     return base64.b64decode(inline["data"]), rate
@@ -84,7 +88,7 @@ def main() -> None:
         outdir = os.path.join(args.out, voice) if len(voices) > 1 else args.out
         os.makedirs(outdir, exist_ok=True)
         print(f"\n■ {voice} · {args.model} · {len(lines)}컷")
-        over = []
+        over, failed = [], []
         for i, l in enumerate(lines):
             path = os.path.join(outdir, f"{l['id']:02d}.wav")
             if args.skip_existing and os.path.exists(path):
@@ -92,7 +96,18 @@ def main() -> None:
                 continue
             if i:
                 time.sleep(args.delay)
-            pcm, rate = synth(l["text"], voice, args.model, key, tone)
+            try:
+                pcm, rate = synth(l["text"], voice, args.model, key, tone)
+            except NoAudio:
+                # 문장이 짧고 끝맺음이 없으면 모델이 낭독 대신 대답을 하려 든다.
+                time.sleep(args.delay)
+                try:
+                    pcm, rate = synth(l["text"].rstrip("."), voice, args.model, key,
+                                      tone + ". 아래 문장을 그대로 소리 내어 읽어라")
+                except NoAudio as e:
+                    print(f"  {l['id']:>2} 실패 — {e}  {l['text']}")
+                    failed.append(l["id"])
+                    continue
             dur = len(pcm) / (rate * 2)
             with open(path, "wb") as f:
                 f.write(wav_from_pcm(pcm, rate))
@@ -104,6 +119,8 @@ def main() -> None:
             print(f"  {l['id']:>2} {dur:>5.2f}초 / 슬롯 {slot:>4.1f}초  {margin:>+5.2f}  {flag}  {l['text']}")
             report.append({"voice": voice, "id": l["id"], "sec": round(dur, 2),
                            "slot": round(slot, 2), "margin": round(margin, 2), "text": l["text"]})
+        if failed:
+            print(f"\n  ⚠ 생성 실패 {len(failed)}컷: {failed} — --skip-existing 으로 다시 돌리세요")
         if over:
             print(f"\n  ⚠ 슬롯 초과 {len(over)}컷 — 문장을 줄여야 합니다")
             for i, sec, t in over:
