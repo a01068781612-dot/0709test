@@ -1,4 +1,5 @@
 wav*/
 out/
+out2/
 tts_*.log
 *.wav
