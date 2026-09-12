@@ -12,6 +12,7 @@
 옵션:
     --list        내려받지 않고 감지된 영상 목록만 출력
     --debug       진단 정보를 _debug/ 에 남김
+    --jobs N      동시 다운로드 수 (기본값: 4)
     --out DIR     저장 폴더 (기본값: 바탕화면\네이버카페영상)
     --cafe ID     카페 ID (기본값: 31568077)
 
@@ -21,6 +22,7 @@
 
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import re
 import shutil
 import subprocess
@@ -233,30 +235,49 @@ def safe_name(text, index):
 
 
 # ── 다운로드 ──────────────────────────────────────────────────────────────
+def remote_size(src):
+    try:
+        r = requests.head(src, headers={"User-Agent": UA}, allow_redirects=True, timeout=30)
+        return int(r.headers.get("Content-Length") or 0)
+    except Exception:
+        return 0
+
+
 def download(src, dest):
+    """받는 동안은 .part 로 두고, 다 받은 뒤에만 최종 이름으로 바꾼다.
+    중간에 끊긴 파일이 완성본으로 오인되는 일을 막기 위함이다."""
+    part = dest.with_name(dest.name + ".part")
     if ".m3u8" in src:
         if not shutil.which("ffmpeg"):
-            print(f"   HLS 영상입니다. ffmpeg 가 필요합니다: {src}")
-            return
-        subprocess.run(["ffmpeg", "-y", "-loglevel", "warning",
-                        "-user_agent", UA, "-i", src, "-c", "copy", str(dest)], check=True)
-        return
-
-    with requests.get(src, headers={"User-Agent": UA}, stream=True, timeout=60) as r:
-        r.raise_for_status()
-        total = int(r.headers.get("Content-Length") or 0)
-        done = 0
-        with open(dest, "wb") as f:
-            for chunk in r.iter_content(1 << 20):
-                f.write(chunk)
-                done += len(chunk)
-                if total:
-                    print(f"\r   {done / total:6.1%}  ({done >> 20}MB / {total >> 20}MB)",
-                          end="", flush=True)
-        print()
+            raise RuntimeError("HLS 영상은 ffmpeg 가 필요합니다")
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error",
+                        "-user_agent", UA, "-i", src, "-c", "copy", str(part)], check=True)
+    else:
+        with requests.get(src, headers={"User-Agent": UA}, stream=True, timeout=60) as r:
+            r.raise_for_status()
+            with open(part, "wb") as f:
+                for chunk in r.iter_content(1 << 20):
+                    f.write(chunk)
+    part.replace(dest)
+    return dest.stat().st_size
 
 
-def grab(target, cafe=DEFAULT_CAFE, outdir=DEFAULT_OUT, list_only=False, debug=False):
+def fetch_one(idx, total, name, src, out):
+    dest = out / (name + ".mp4")
+    if dest.exists():
+        expected = remote_size(src)
+        if expected and dest.stat().st_size == expected:
+            return f"[{idx}/{total}] {dest.name} — 이미 있음, 건너뜀"
+        dest.unlink()  # 크기가 다르면 끊긴 파일이므로 다시 받는다
+    print(f"[{idx}/{total}] 시작  {dest.name}", flush=True)
+    try:
+        size = download(src, dest)
+        return f"[{idx}/{total}] 완료  {dest.name}  ({size >> 20}MB)"
+    except Exception as e:
+        return f"[{idx}/{total}] 실패  {dest.name}  ({e})"
+
+
+def grab(target, cafe=DEFAULT_CAFE, outdir=DEFAULT_OUT, list_only=False, debug=False, jobs=4):
     url = target if target.startswith("http") else ARTICLE_URL.format(cafe=cafe, article=target)
     print(f"대상: {url}\n")
 
@@ -290,16 +311,13 @@ def grab(target, cafe=DEFAULT_CAFE, outdir=DEFAULT_OUT, list_only=False, debug=F
 
     out = Path(outdir)
     out.mkdir(parents=True, exist_ok=True)
-    for idx, (name, src) in enumerate(sources, 1):
-        dest = out / (name + ".mp4")
-        if dest.exists() and dest.stat().st_size > 0:
-            print(f"\n[{idx}/{len(sources)}] {dest.name} — 이미 있음, 건너뜀")
-            continue
-        print(f"\n[{idx}/{len(sources)}] {dest.name}")
-        try:
-            download(src, dest)
-        except Exception as e:
-            print(f"   실패: {e}")
+    total = len(sources)
+    print(f"동시 {jobs}개씩 다운로드\n")
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        futures = [pool.submit(fetch_one, i, total, name, src, out)
+                   for i, (name, src) in enumerate(sources, 1)]
+        for fut in as_completed(futures):
+            print(fut.result(), flush=True)
 
     print(f"\n완료 -> {out.resolve()}")
 
@@ -320,7 +338,8 @@ def main():
              cafe=opt("--cafe", DEFAULT_CAFE),
              outdir=opt("--out", DEFAULT_OUT),
              list_only="--list" in args,
-             debug="--debug" in args)
+             debug="--debug" in args,
+             jobs=int(opt("--jobs", 4)))
     else:
         sys.exit(__doc__)
 
