@@ -221,12 +221,25 @@ def best_source(payload):
     return None
 
 
+JUNK = re.compile(r"^(\d+%?|[\d:]+(\s*/\s*[\d:]+)?|재생(\s*\d+)?|HD|\d+p|\.+)$")
+
+
+def good_title(text):
+    """플레이어 UI 문자열("100%", "재생", "0:03 / 15:00")은 제목으로 쓰지 않는다."""
+    text = (text or "").strip()
+    return text if text and not JUNK.match(text) else ""
+
+
 def resolve(item):
+    """원본 주소와 제목을 돌려준다. 제목은 API 응답 → DOM 캡션 순으로 고른다."""
     r = requests.get(PLAY_API.format(vid=item["vid"], inkey=item["inkey"]),
                      headers={"User-Agent": UA, "Referer": "https://cafe.naver.com/"},
                      timeout=30)
     r.raise_for_status()
-    return best_source(r.json())
+    payload = r.json()
+    api_title = good_title((payload.get("meta") or {}).get("subject"))
+    title = api_title or good_title(item.get("title"))
+    return best_source(payload), title
 
 
 def safe_name(text, index):
@@ -264,10 +277,17 @@ def download(src, dest):
 
 def fetch_one(idx, total, name, src, out):
     dest = out / (name + ".mp4")
+    for stale in out.glob(dest.name + ".part"):
+        stale.unlink()
+    expected = remote_size(src)
+    # 이름이 달라도 크기가 같은 파일이 있으면 이미 받은 것이다
+    if expected:
+        for existing in out.glob("*.mp4"):
+            if existing.stat().st_size == expected:
+                if existing != dest:
+                    existing.rename(dest)  # 이름만 새 규칙에 맞춘다
+                return f"[{idx}/{total}] {dest.name} — 이미 있음, 건너뜀"
     if dest.exists():
-        expected = remote_size(src)
-        if expected and dest.stat().st_size == expected:
-            return f"[{idx}/{total}] {dest.name} — 이미 있음, 건너뜀"
         dest.unlink()  # 크기가 다르면 끊긴 파일이므로 다시 받는다
     print(f"[{idx}/{total}] 시작  {dest.name}", flush=True)
     try:
@@ -286,12 +306,12 @@ def grab(target, cafe=DEFAULT_CAFE, outdir=DEFAULT_OUT, list_only=False, debug=F
     sources = []
     for i, it in enumerate(items, 1):
         try:
-            src = resolve(it)
+            src, title = resolve(it)
         except Exception as e:
             print(f"[{i}] 주소 확인 실패: {e}")
             continue
         if src:
-            sources.append((safe_name(it["title"], i), src))
+            sources.append((safe_name(title, i), src))
 
     if not sources:  # DOM 파싱이 실패하면 가로챈 응답을 대신 사용
         for i, payload in enumerate(sniffed, 1):
