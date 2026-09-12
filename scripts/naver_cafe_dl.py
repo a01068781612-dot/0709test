@@ -12,7 +12,7 @@
 옵션:
     --list        내려받지 않고 감지된 영상 목록만 출력
     --debug       진단 정보를 _debug/ 에 남김
-    --out DIR     저장 폴더 (기본값: downloads)
+    --out DIR     저장 폴더 (기본값: 바탕화면\네이버카페영상)
     --cafe ID     카페 ID (기본값: 31568077)
 
 로그인 세션은 저장소가 아니라 사용자 설정 폴더에 보관한다.
@@ -35,6 +35,19 @@ ARTICLE_URL = "https://cafe.naver.com/f-e/cafes/{cafe}/articles/{article}?boardt
 PLAY_API = "https://apis.naver.com/rmcnmv/rmcnmv/vod/play/v2.0/{vid}?key={inkey}"
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+
+
+def desktop_dir():
+    """바탕화면 경로. OneDrive 로 옮겨진 한국어 Windows 도 처리한다."""
+    home = Path.home()
+    for cand in (home / "Desktop", home / "OneDrive" / "Desktop",
+                 home / "OneDrive" / "바탕 화면", home / "바탕 화면"):
+        if cand.is_dir():
+            return cand
+    return home / "Desktop"
+
+
+DEFAULT_OUT = desktop_dir() / "네이버카페영상"
 
 
 def state_path():
@@ -224,7 +237,7 @@ def download(src, dest):
         print()
 
 
-def grab(target, cafe=DEFAULT_CAFE, outdir="downloads", list_only=False, debug=False):
+def grab(target, cafe=DEFAULT_CAFE, outdir=DEFAULT_OUT, list_only=False, debug=False):
     url = target if target.startswith("http") else ARTICLE_URL.format(cafe=cafe, article=target)
     print(f"대상: {url}\n")
 
@@ -286,7 +299,7 @@ def main():
     elif args[0] == "grab" and len(args) >= 2:
         grab(args[1],
              cafe=opt("--cafe", DEFAULT_CAFE),
-             outdir=opt("--out", "downloads"),
+             outdir=opt("--out", DEFAULT_OUT),
              list_only="--list" in args,
              debug="--debug" in args)
     else:
