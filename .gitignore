@@ -6,3 +6,9 @@ out4/
 여성후보/
 *.log
 *.wav
+
+# 네이버 카페 영상 다운로드 산출물
+downloads/
+_debug/
+naver_state.json
+__pycache__/
