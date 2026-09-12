@@ -11,3 +11,4 @@ out4/
 downloads/
 _debug/
 naver_state.json
+__pycache__/
