@@ -30,6 +30,11 @@ from pathlib import Path
 import requests
 from playwright.sync_api import sync_playwright
 
+# Windows 콘솔은 기본 인코딩이 cp949 라 한글 캡션 출력에서 죽는다
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 DEFAULT_CAFE = "31568077"
 ARTICLE_URL = "https://cafe.naver.com/f-e/cafes/{cafe}/articles/{article}?boardtype=L"
 PLAY_API = "https://apis.naver.com/rmcnmv/rmcnmv/vod/play/v2.0/{vid}?key={inkey}"
@@ -87,12 +92,26 @@ def login():
 
 # ── 게시글에서 영상 정보 수집 ──────────────────────────────────────────────
 CAPTION_JS = """(node) => {
-    let n = node.closest('.se-component') || node;
+    // 플레이어 UI 에서 새어 나오는 문자열("100%", "0:00 / 15:00", "재생 173")은 캡션이 아니다
+    const junk = /^(\\d+%|[\\d:]+\\s*\\/\\s*[\\d:]+|재생\\s*\\d+|HD|\\d+p)$/;
+    const clean = (t) => {
+        for (const line of (t || '').split('\\n')) {
+            const s = line.trim();
+            if (s && !junk.test(s)) return s.slice(0, 80);
+        }
+        return '';
+    };
+    const comp = node.closest('.se-component') || node;
+    // 1순위: 스마트에디터가 영상 컴포넌트 안에 넣는 캡션
+    const cap = comp.querySelector('.se-caption, [class*="caption"]');
+    if (cap) { const c = clean(cap.innerText); if (c) return c; }
+    // 2순위: 다음 형제 블록의 첫 텍스트
+    let n = comp;
     for (let i = 0; i < 5 && n; i++) {
         n = n.nextElementSibling;
         if (!n) break;
-        const t = (n.innerText || '').trim();
-        if (t) return t.split('\\n')[0].slice(0, 80);
+        const c = clean(n.innerText);
+        if (c) return c;
     }
     return '';
 }"""
