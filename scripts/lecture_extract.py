@@ -153,14 +153,18 @@ def extract_audio(ffmpeg: str, video: Path, wav: Path, limit: float | None) -> N
     run_ffmpeg(cmd, "음성 추출")
 
 
-def extract_frames(ffmpeg: str, video: Path, work: Path, limit: float | None, threshold: float, width: int) -> tuple[list[float], list[int]]:
-    """장면이 바뀐 프레임을 한 번의 디코딩으로 뽑는다.
+def extract_frames(ffmpeg: str, video: Path, work: Path, limit: float | None, threshold: float, width: int,
+                   interval: float = 0) -> tuple[list[float], list[int]]:
+    """장면이 바뀐 프레임(+ interval 초마다 한 장)을 한 번의 디코딩으로 뽑는다.
 
     같은 프레임을 두 갈래로 내보낸다: (a) 가로 `width`px JPG, (b) 17×16 회색 축소본(중복 판정용 dHash 재료).
     돌려주는 값: (프레임별 시각(초), 프레임별 dHash) — 순서는 저장된 f_000001.jpg … 와 같다.
     """
+    expr = f"eq(n,0)+gt(scene,{threshold})"
+    if interval > 0:
+        expr += f"+gte(t-prev_selected_t,{interval})"  # 마지막으로 뽑은 뒤 interval 초가 지났으면 한 장 더
     fc = (
-        f"[0:v]select='eq(n,0)+gt(scene,{threshold})',showinfo,split=2[a][b];"
+        f"[0:v]select='{expr}',showinfo,split=2[a][b];"
         f"[a]scale={width}:-2[big];"
         f"[b]scale={HASH_W}:{HASH_H}:flags=area,format=gray[small]"
     )
@@ -433,7 +437,7 @@ def cmd_run(args) -> int:
 
         # 2) 장면 전환 프레임
         if not args.skip_frames:
-            times, hashes = extract_frames(ffmpeg, video, work, limit, args.scene_threshold, args.width)
+            times, hashes = extract_frames(ffmpeg, video, work, limit, args.scene_threshold, args.width, args.interval)
             n_raw = len(times)
             kept, dropped = list(range(n_raw)), {}
             if args.dedup == "always" or (args.dedup == "auto" and n_raw > args.max_frames):
@@ -467,7 +471,8 @@ def cmd_run(args) -> int:
     # 3) 요약
     lines = [f"# 추출 결과  ({dt.datetime.now():%Y-%m-%d %H:%M})", "",
              f"- 입력: `{folder}`", f"- 모드: {mode}", f"- STT: {stt.describe() if stt else '건너뜀'}",
-             f"- 장면 전환 기준 {args.scene_threshold}, 프레임 폭 {args.width}px, 중복 제거 {args.dedup} (기준 {args.max_frames}장, 거리 ≤ {args.dedup_distance})", "",
+             f"- 장면 전환 기준 {args.scene_threshold}, 추가 샘플 {f'{args.interval:g}초마다' if args.interval else '없음'}, 프레임 폭 {args.width}px, "
+             f"중복 제거 {args.dedup} (기준 {args.max_frames}장, 거리 ≤ {args.dedup_distance})", "",
              "| # | 영상 | 길이 | 자막 구간 | 프레임 감지→저장 | 소요 |", "|---|---|---|---|---|---|"]
     lines += [f"| {i} | {r['영상']} | {r['길이']} | {r['구간'] if r['자막'] != '-' else '-'} | {r['감지']}→{r['저장']} | {r['소요']} |"
               for i, r in enumerate(rows, 1)]
@@ -514,6 +519,7 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--prompt", default=DEFAULT_PROMPT, help="용어 힌트 (빈 문자열이면 사용 안 함)")
     g = p_run.add_argument_group("프레임")
     g.add_argument("--scene-threshold", type=float, default=0.3, help="장면 전환 민감도 0~1, 낮을수록 많이 뽑음 (기본 0.3)")
+    g.add_argument("--interval", type=float, default=0, help="이 초마다 한 장씩 추가로 뽑음, 0이면 장면 전환만 (기본 0)")
     g.add_argument("--width", type=int, default=1280, help="저장 프레임 가로 px (기본 1280)")
     g.add_argument("--max-frames", type=int, default=300, help="이 장수를 넘으면 중복 제거 (기본 300)")
     g.add_argument("--dedup", choices=["auto", "always", "never"], default="auto")
