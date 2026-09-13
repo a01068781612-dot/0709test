@@ -309,7 +309,7 @@ def resolve_input(arg: str | None) -> Path:
         if folder.is_dir():
             return folder
     die("영상 폴더를 찾지 못했습니다. 경로를 직접 적어 주세요.\n"
-        "  예) python scripts/lecture_extract.py list \"C:\\Users\\spf38\\OneDrive\\바탕 화면\\네이버카페영상\"")
+        "  예) python scripts/lecture_extract.py list \"C:\\Users\\<계정명>\\OneDrive\\바탕 화면\\네이버카페영상\"")
     return Path()
 
 
