@@ -6,3 +6,5 @@ out4/
 여성후보/
 *.log
 *.wav
+output/
+__pycache__/
