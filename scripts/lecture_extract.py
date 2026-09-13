@@ -29,6 +29,11 @@ import sys
 import time
 from pathlib import Path
 
+# Windows + Anaconda: MKL(numpy)과 ctranslate2 가 각자 OpenMP(libiomp5md.dll)를 실어
+# "OMP: Error #15" 로 죽는다. whisper 를 불러오기 전에 중복 로드를 허용해 둔다.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")  # 모델 캐시 심볼릭 링크 경고 숨김
+
 VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".wmv", ".m4v", ".ts", ".mts", ".flv", ".mpg", ".mpeg"}
 DEFAULT_INPUTS = ["~/OneDrive/바탕 화면/네이버카페영상", "~/Desktop/네이버카페영상", "~/OneDrive/Desktop/네이버카페영상"]
 DEFAULT_PROMPT = "주식 차트 강의입니다. 이동평균선, 거래량, 지지선, 저항선, 매수, 매도, 눌림목, 돌파."
