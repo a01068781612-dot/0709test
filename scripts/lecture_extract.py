@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """강의 영상 → 한국어 자막(srt) + 장면 전환 프레임(jpg).
 
-  python3 scripts/lecture_extract.py check                              # ffmpeg / whisper 설치 확인
-  python3 scripts/lecture_extract.py list "~/Desktop/네이버 카페"         # 영상 목록과 길이
-  python3 scripts/lecture_extract.py run  "~/Desktop/네이버 카페" --test  # 첫 영상 앞 5분만 시험
-  python3 scripts/lecture_extract.py run  "~/Desktop/네이버 카페"         # 전체 영상
+  python scripts/lecture_extract.py check          # ffmpeg / whisper 설치 확인
+  python scripts/lecture_extract.py list           # 영상 목록과 길이 (하위 폴더 포함)
+  python scripts/lecture_extract.py run --test     # 첫 영상 앞 5분만 시험
+  python scripts/lecture_extract.py run            # 전체 영상
+
+폴더를 생략하면 ~/OneDrive/바탕 화면/네이버카페영상 → ~/Desktop/네이버카페영상 순으로 찾는다.
+다른 곳이면 첫 인자로 적는다:  python scripts/lecture_extract.py list "D:\\강의\\네이버카페영상"
 
 산출물 (기본 --out output)
   output/자막/<영상>.srt, <영상>.txt
@@ -27,7 +30,7 @@ import time
 from pathlib import Path
 
 VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".wmv", ".m4v", ".ts", ".mts", ".flv", ".mpg", ".mpeg"}
-DEFAULT_INPUT = "~/Desktop/네이버 카페"
+DEFAULT_INPUTS = ["~/OneDrive/바탕 화면/네이버카페영상", "~/Desktop/네이버카페영상", "~/OneDrive/Desktop/네이버카페영상"]
 DEFAULT_PROMPT = "주식 차트 강의입니다. 이동평균선, 거래량, 지지선, 저항선, 매수, 매도, 눌림목, 돌파."
 HASH_W, HASH_H = 17, 16  # dHash 축소 크기 → 16×16 = 256비트 해시
 
@@ -51,12 +54,23 @@ def die(msg: str) -> None:
     sys.exit(f"오류: {msg}")
 
 
-def natural_key(p: Path):
-    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", p.name)]
+def natural_key(rel: Path):
+    """'1강' < '2강' < '10강' 이 되도록 숫자는 수로 비교한다. 하위 폴더도 같은 규칙."""
+    return [[int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", part)] for part in rel.parts]
 
 
 def find_videos(folder: Path) -> list[Path]:
-    return sorted((p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in VIDEO_EXT), key=natural_key)
+    """하위 폴더(예: 1,2강/ 3,4,5강/)까지 훑어 영상 파일을 자연 정렬로 돌려준다."""
+    vids = [p for p in folder.rglob("*") if p.is_file() and p.suffix.lower() in VIDEO_EXT and not p.name.startswith(".")]
+    return sorted(vids, key=lambda p: natural_key(p.relative_to(folder)))
+
+
+def output_stems(videos: list[Path]) -> dict[Path, str]:
+    """산출물 이름은 파일명. 다른 폴더에 같은 이름이 있으면 폴더명을 앞에 붙인다."""
+    counts: dict[str, int] = {}
+    for v in videos:
+        counts[v.stem] = counts.get(v.stem, 0) + 1
+    return {v: v.stem if counts[v.stem] == 1 else f"{v.parent.name}_{v.stem}" for v in videos}
 
 
 def hms(sec: float | None) -> str:
@@ -276,10 +290,18 @@ def write_srt(segs: list[tuple[float, float, str]], srt: Path, txt: Path) -> Non
 
 # ────────────────────────── 명령 ──────────────────────────
 def resolve_input(arg: str | None) -> Path:
-    folder = Path(arg or DEFAULT_INPUT).expanduser()
-    if not folder.is_dir():
-        die(f"폴더가 없습니다: {folder}\n  예) python3 scripts/lecture_extract.py list \"C:/Users/<이름>/Desktop/네이버 카페\"")
-    return folder
+    if arg:
+        folder = Path(arg).expanduser()
+        if not folder.is_dir():
+            die(f"폴더가 없습니다: {folder}")
+        return folder
+    for cand in DEFAULT_INPUTS:
+        folder = Path(cand).expanduser()
+        if folder.is_dir():
+            return folder
+    die("영상 폴더를 찾지 못했습니다. 경로를 직접 적어 주세요.\n"
+        "  예) python scripts/lecture_extract.py list \"C:\\Users\\spf38\\OneDrive\\바탕 화면\\네이버카페영상\"")
+    return Path()
 
 
 def cmd_check(args) -> int:
@@ -325,7 +347,7 @@ def cmd_list(args) -> int:
         info = probe(ffmpeg, v)
         total += info["duration"] or 0
         mb = v.stat().st_size / 1e6
-        print(f"{i:>2}  {hms(info['duration']):>8}  {info['size']:>9}  {info['fps']:>5}  {mb:7.0f}M  {v.name}")
+        print(f"{i:>2}  {hms(info['duration']):>8}  {info['size']:>9}  {info['fps']:>5}  {mb:7.0f}M  {v.relative_to(folder)}")
     print(f"\n합계 {len(videos)}편, {hms(total)}")
     return 0
 
@@ -339,7 +361,7 @@ def select_videos(videos: list[Path], select: str | None) -> list[Path]:
         if tok.isdigit() and 1 <= int(tok) <= len(videos):
             chosen.append(videos[int(tok) - 1])
         else:
-            hit = [v for v in videos if tok in v.name]
+            hit = [v for v in videos if tok in str(v)]
             if not hit:
                 die(f"--select '{tok}' 에 해당하는 영상이 없습니다 (list 로 번호를 확인하세요)")
             chosen += hit
@@ -355,6 +377,7 @@ def cmd_run(args) -> int:
     limit = None
     if args.test:
         videos, limit = videos[:1], args.test_minutes * 60.0
+    stems = output_stems(videos)
     out = Path(args.out)
     sub_dir, frame_dir, work_root = out / "자막", out / "프레임", out / "_work"
     sub_dir.mkdir(parents=True, exist_ok=True)
@@ -377,12 +400,12 @@ def cmd_run(args) -> int:
         dur = info["duration"] or 0
         if limit:
             dur = min(dur, limit)
-        stem = video.stem + (f"_앞{args.test_minutes:g}분" if limit else "")
-        print(f"[{idx}/{len(videos)}] {video.name}  ({hms(dur)}, {info['size']})")
+        stem = stems[video] + (f"_앞{args.test_minutes:g}분" if limit else "")
+        print(f"[{idx}/{len(videos)}] {video.relative_to(folder)}  ({hms(dur)}, {info['size']})")
         work = work_root / stem
         shutil.rmtree(work, ignore_errors=True)
         work.mkdir(parents=True)
-        row = {"영상": video.name, "길이": hms(dur), "자막": "-", "구간": 0, "프레임": "-", "감지": 0, "저장": 0}
+        row = {"영상": str(video.relative_to(folder)), "길이": hms(dur), "자막": "-", "구간": 0, "프레임": "-", "감지": 0, "저장": 0}
 
         # 1) 음성 → 자막
         if stt and info["has_audio"]:
@@ -467,10 +490,10 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("check", help="도구 설치 확인")
 
     p_list = sub.add_parser("list", help="영상 목록과 길이")
-    p_list.add_argument("input", nargs="?", help=f"영상 폴더 (기본 {DEFAULT_INPUT})")
+    p_list.add_argument("input", nargs="?", help=f"영상 폴더, 하위 폴더 포함 (기본 {DEFAULT_INPUTS[0]})")
 
     p_run = sub.add_parser("run", help="자막 + 프레임 추출")
-    p_run.add_argument("input", nargs="?", help=f"영상 폴더 (기본 {DEFAULT_INPUT})")
+    p_run.add_argument("input", nargs="?", help=f"영상 폴더, 하위 폴더 포함 (기본 {DEFAULT_INPUTS[0]})")
     p_run.add_argument("--out", default="output", help="산출물 폴더 (기본 ./output)")
     p_run.add_argument("--test", action="store_true", help="첫 번째 영상의 앞부분만 (--test-minutes)")
     p_run.add_argument("--test-minutes", type=float, default=5, help="--test 때 자를 길이 (기본 5분)")
