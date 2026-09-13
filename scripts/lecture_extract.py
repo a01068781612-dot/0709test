@@ -411,6 +411,17 @@ def cmd_run(args) -> int:
             dur = min(dur, limit)
         stem = stems[video] + (f"_앞{args.test_minutes:g}분" if limit else "")
         print(f"[{idx}/{len(videos)}] {video.relative_to(folder)}  ({hms(dur)}, {info['size']})")
+        srt_path, frames_path = sub_dir / f"{stem}.srt", frame_dir / stem
+        done_stt = args.skip_stt or not info["has_audio"] or srt_path.exists()
+        done_frames = args.skip_frames or frames_path.is_dir()
+        if done_stt and done_frames and not args.force:
+            n_seg = len([b for b in srt_path.read_text(encoding="utf-8").split("\n\n") if b.strip()]) if srt_path.exists() else 0
+            n_jpg = len(list(frames_path.glob("*.jpg"))) if frames_path.is_dir() else 0
+            print(f"  이미 처리됨 → 건너뜀 (자막 {n_seg} 구간, 프레임 {n_jpg}장). 다시 하려면 --force")
+            rows.append({"영상": str(video.relative_to(folder)), "길이": hms(dur),
+                         "자막": str(srt_path) if srt_path.exists() else "-", "구간": n_seg,
+                         "프레임": str(frames_path) if frames_path.is_dir() else "-", "감지": n_jpg, "저장": n_jpg, "소요": "건너뜀"})
+            continue
         work = work_root / stem
         shutil.rmtree(work, ignore_errors=True)
         work.mkdir(parents=True)
@@ -525,6 +536,7 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--dedup", choices=["auto", "always", "never"], default="auto")
     g.add_argument("--dedup-distance", type=int, default=10, help="중복으로 볼 dHash 거리 (256비트 중, 기본 10)")
     p_run.add_argument("--keep-work", action="store_true", help="wav 등 중간 파일을 output/_work 에 남김")
+    p_run.add_argument("--force", action="store_true", help="이미 산출물이 있는 영상도 다시 처리")
 
     args = ap.parse_args(argv)
     return {"check": cmd_check, "list": cmd_list, "run": cmd_run}[args.cmd](args)
